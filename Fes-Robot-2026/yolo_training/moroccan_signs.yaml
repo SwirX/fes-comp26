@@ -1,0 +1,13 @@
+# YOLO Dataset Configuration for Moroccan Road Signs
+# Path configuration
+path: ../datasets/moroccan_signs  # dataset root dir (relative or absolute)
+train: images/train  # train images (relative to 'path')
+val: images/val  # val images (relative to 'path')
+
+# Classes
+names:
+  0: stop_sign
+  1: wrong_way
+  2: speed_limit
+  3: red_light
+  4: green_light

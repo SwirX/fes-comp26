@@ -1,0 +1,106 @@
+description: Ultralytics best model trained on /content/datasets/moroccan_signs/config.yaml
+author: SwirX
+date: '2026-04-22T15:55:42.814720'
+version: 8.4.41
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 320
+- 320
+names:
+  0: Accès interdit aux motocycles
+  1: Sens giratoire obligatoire
+  2: Parc de stationnement
+  3: Circulation interdite dans les deux sens
+  4: Accès interdit aux véhicules de transport en commun de personnes
+  5: Le stationnement et/ou l'arrêt sont gênants. Le véhicule est susceptible d'une
+    mise en fourrière.
+  6: Accès interdit aux cyclomoteurs
+  7: Traversée de voies de tramway
+  8: Travaux
+  9: Piste obligatoire pour cyclistes et cyclomoteurs
+  10: Contournement obligatoire par la droite
+  11: Arrêt d'autobus
+  12: Intersection d'une route prioritaire avec une route de moindre importance
+  13: Cédez le passage à l'intersection - signal de position
+  14: Accès interdit aux véhicules à traction animale
+  15: Rétrécissement ponctuel
+  16: Passage pour piétons
+  17: Endroit fréquenté par les enfants
+  18: Accès interdit aux véhicules affectés au transport de marchandises
+  19: Interdiction de dépasser
+  20: Interdiction de faire demi-tour
+  21: Interdiction de tourner à droite
+  22: Interdiction de tourner à gauche
+  23: Virage à droite
+  24: Virage à gauche
+  25: Arrêt au barrage de police
+  26: Stationnement interdit
+  27: Limitation de Vitesse
+  28: Stop
+  29: Passage d'animaux domestiques
+  30: Carrefour à sens giratoire
+  31: Succession de virages dont le premier est à gauche
+  32: Succession de virages dont le premier est à droite
+  33: Chaussée rétrécie
+  34: Sens interdit
+  35: Accès interdit aux véhicules dont la hauteur, chargement compris, est supérieure
+    au nombre indiqué
+  36: Projection de gravillons
+  37: Arrêt au poste de douane
+  38: 'Direction obligatoire à la prochaine intersection : à gauche'
+  39: Accès interdit aux véhicules dont le poids total autorisé en charge ou le poids
+    total roulant autorisé excède le nombre indiqué
+  40: Cassis ou dos d'âne
+  41: 'Direction obligatoire à la prochaine intersection : tout droit'
+  42: Accès interdit aux cycles
+  43: Arrêt et stationnement interdit
+  44: Chaussée submersible
+  45: Obligation de tourner à gauche avant le panneau
+  46: Cédez le passage à la circulation venant en sens inverse
+  47: Accès interdit aux piétons
+  48: Chaussée rétrécie par la gauche
+  49: Contrôle routier
+  50: Obligation de tourner à drote avant le panneau
+  51: Autres dangers
+  52: Contournement obligatoire par la gauche
+  53: Piste obligatoire pour cyclistes
+  54: Intersection de routes auxquelles s'applique la règle générale de priorité à
+    droite
+  55: Interdiction aux véhicules de circuler sans maintenir entre eux un intervalle
+    au moins égal au nombre indiqué
+  56: Voie réservée aux tramways
+  57: Montée à forte inclinaison
+  58: Interdiction aux véhicules automobiles, véhicules articulés, trains doubles
+    ou ensemble de véhicules, affectés au transport de marchandises dont le poids
+    total autorisé en charge ou le poids total roulant autorisé est supérieur à 3.5
+    tonnes de dépasser tous les véhicules à moteur autres que ceux à deux roues sans
+    side-car
+  59: Cédez le passage à l'intersection - signal avancé du panneau stop
+  60: Ralentisseur type dos d'âne
+  61: Fin de limitation de Vitesse
+  62: Fin de toutes les interdictions précédemment signalées, imposées aux véhicules
+    en mouvement
+  63: Signaux sonores interdits
+  64: Fin d'interdiction de dépasser
+  65: Risque d'incendie de forêt
+  66: Arrêt au barrage de gendarmerie
+  67: Serrez à droite
+  68: Directions obligatoires à la prochaine intersection à droite ou à gauche
+  69: Chaussée rétrécie par la droite
+  70: Accès interdit aux véhicules pesant, par essieu, plus que le nombre indiqué
+  71: affectation de voies
+  72: Direction de déviation
+  73: Balisage de virages
+args:
+  batch: 1
+  fraction: 1.0
+  half: false
+  int8: false
+  dynamic: false
+  nms: false
+channels: 3
+end2end: false

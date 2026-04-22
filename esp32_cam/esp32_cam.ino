@@ -1,9 +1,39 @@
+/*
+ * esp32_cam.ino  –  NURC 2026 ESP32-CAM Firmware
+ * ================================================
+ * Connects as a client to the "rc2" WiFi hotspot, then:
+ *
+ *  VIDEO  : Continuously captures JPEG frames and pushes them via UDP
+ *           to the laptop (last sender's IP) on port 5000.
+ *           No laptop-side configuration needed – the laptop's UDP socket
+ *           on port 5000 auto-receives the stream.
+ *
+ *  CONTROL (UDP port 5002):
+ *    "PING"           → reply "PONG"  (heartbeat)
+ *    "FLASH_TOGGLE"   → toggle the onboard flash LED
+ *    "SERVO:<pan>:<tilt>"  → move pan/tilt servos (0-180 degrees)
+ *    "SERVO_RESET"    → return servos to centre (90°, 90°)
+ *
+ * Wiring (adjust pins to your board):
+ *    Pan  servo signal  → GPIO 14
+ *    Tilt servo signal  → GPIO 15
+ *    Flash LED anode    → GPIO 4  (built-in on most AI-Thinker boards)
+ */
+
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include "esp_http_server.h"
+#include <ESP32Servo.h>
 
-// Standard AI-Thinker Camera Pins
+// ---------------------------------------------------------------------------
+// WiFi credentials
+// ---------------------------------------------------------------------------
+const char* ssid     = "rc2";
+const char* password = "244466666";
+
+// ---------------------------------------------------------------------------
+// Standard AI-Thinker ESP32-CAM pin map
+// ---------------------------------------------------------------------------
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM      0
@@ -21,160 +51,195 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-const char* ssid = "rc2";
-const char* password = "244466666";
+// ---------------------------------------------------------------------------
+// Hardware pins
+// ---------------------------------------------------------------------------
+#define FLASH_LED_PIN  4    // Built-in flash on AI-Thinker
+#define PAN_SERVO_PIN  14   // Pan servo signal wire
+#define TILT_SERVO_PIN 15   // Tilt servo signal wire
 
-WiFiUDP udp;
-unsigned int localUdpPort = 5002;
-char incomingPacket[255];
+// Servo centre positions (degrees)
+#define PAN_CENTER  90
+#define TILT_CENTER 90
 
-httpd_handle_t stream_httpd = NULL;
+// ---------------------------------------------------------------------------
+// Network configuration
+// ---------------------------------------------------------------------------
+#define CMD_PORT   5002   // Receive control commands from laptop
+#define VIDEO_PORT 5000   // Send JPEG frames to laptop on this port
 
-#define PART_BOUNDARY "123456789000000000000987654321"
-static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
-static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
-static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+// ---------------------------------------------------------------------------
+// Globals
+// ---------------------------------------------------------------------------
+WiFiUDP cmdUdp;    // Listens for control commands
+WiFiUDP vidUdp;    // Sends video frames
 
-esp_err_t stream_handler(httpd_req_t *req) {
-    camera_fb_t * fb = NULL;
-    esp_err_t res = ESP_OK;
-    size_t _jpg_buf_len = 0;
-    uint8_t * _jpg_buf = NULL;
-    char * part_buf[64];
+char     incomingPacket[512];
+IPAddress laptopIP;       // Updated on every received packet
+bool     laptopKnown = false;
 
-    res = httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
-    if(res != ESP_OK) return res;
+bool     flashOn = false;
+Servo    panServo;
+Servo    tiltServo;
+int      currentPan  = PAN_CENTER;
+int      currentTilt = TILT_CENTER;
 
-    while(true){
-        fb = esp_camera_fb_get();
-        if (!fb) {
-            Serial.println("Camera capture failed");
-            res = ESP_FAIL;
-        } else {
-            _jpg_buf_len = fb->len;
-            _jpg_buf = fb->buf;
-        }
-        if(res == ESP_OK){
-            size_t hlen = snprintf((char *)part_buf, 64, _STREAM_PART, _jpg_buf_len);
-            res = httpd_resp_send_chunk(req, (const char *)part_buf, hlen);
-        }
-        if(res == ESP_OK){
-            res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len);
-        }
-        if(res == ESP_OK){
-            res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
-        }
-        
-        if(fb){
-            esp_camera_fb_return(fb);
-            fb = NULL;
-            _jpg_buf = NULL;
-        } else if(_jpg_buf){
-            free(_jpg_buf);
-            _jpg_buf = NULL;
-        }
-        
-        if(res != ESP_OK) break;
-    }
-    return res;
-}
-
-void startCameraServer(){
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.server_port = 80;
-
-    httpd_uri_t index_uri = {
-        .uri       = "/",
-        .method    = HTTP_GET,
-        .handler   = stream_handler,
-        .user_ctx  = NULL
-    };
-    
-    if (httpd_start(&stream_httpd, &config) == ESP_OK) {
-        httpd_register_uri_handler(stream_httpd, &index_uri);
-    }
-}
-
-void setup() {
-    Serial.begin(115200);
-    // Initialize Camera Config
+// ---------------------------------------------------------------------------
+// Camera initialisation
+// ---------------------------------------------------------------------------
+void initCamera() {
     camera_config_t config;
-    config.ledc_channel = LEDC_CHANNEL_0;
-    config.ledc_timer = LEDC_TIMER_0;
-    config.pin_d0 = Y2_GPIO_NUM;
-    config.pin_d1 = Y3_GPIO_NUM;
-    config.pin_d2 = Y4_GPIO_NUM;
-    config.pin_d3 = Y5_GPIO_NUM;
-    config.pin_d4 = Y6_GPIO_NUM;
-    config.pin_d5 = Y7_GPIO_NUM;
-    config.pin_d6 = Y8_GPIO_NUM;
-    config.pin_d7 = Y9_GPIO_NUM;
-    config.pin_xclk = XCLK_GPIO_NUM;
-    config.pin_pclk = PCLK_GPIO_NUM;
-    config.pin_vsync = VSYNC_GPIO_NUM;
-    config.pin_href = HREF_GPIO_NUM;
-    config.pin_sscb_sda = SIOD_GPIO_NUM;
-    config.pin_sscb_scl = SIOC_GPIO_NUM;
-    config.pin_pwdn = PWDN_GPIO_NUM;
-    config.pin_reset = RESET_GPIO_NUM;
-    config.xclk_freq_hz = 20000000;
-    config.pixel_format = PIXFORMAT_JPEG;
-    
-    // Choose resolution (VGA is 640x480 - good baseline for YOLOv8)
-    if(psramFound()){
-        config.frame_size = FRAMESIZE_VGA;
-        config.jpeg_quality = 10;
-        config.fb_count = 2; // Double buffering
-    } else {
-        config.frame_size = FRAMESIZE_SVGA;
+    config.ledc_channel  = LEDC_CHANNEL_0;
+    config.ledc_timer    = LEDC_TIMER_0;
+    config.pin_d0        = Y2_GPIO_NUM;
+    config.pin_d1        = Y3_GPIO_NUM;
+    config.pin_d2        = Y4_GPIO_NUM;
+    config.pin_d3        = Y5_GPIO_NUM;
+    config.pin_d4        = Y6_GPIO_NUM;
+    config.pin_d5        = Y7_GPIO_NUM;
+    config.pin_d6        = Y8_GPIO_NUM;
+    config.pin_d7        = Y9_GPIO_NUM;
+    config.pin_xclk      = XCLK_GPIO_NUM;
+    config.pin_pclk      = PCLK_GPIO_NUM;
+    config.pin_vsync     = VSYNC_GPIO_NUM;
+    config.pin_href      = HREF_GPIO_NUM;
+    config.pin_sscb_sda  = SIOD_GPIO_NUM;
+    config.pin_sscb_scl  = SIOC_GPIO_NUM;
+    config.pin_pwdn      = PWDN_GPIO_NUM;
+    config.pin_reset     = RESET_GPIO_NUM;
+    config.xclk_freq_hz  = 20000000;
+    config.pixel_format  = PIXFORMAT_JPEG;
+
+    // Use smaller frame to keep UDP packets within 65507-byte limit
+    if (psramFound()) {
+        config.frame_size   = FRAMESIZE_QVGA;  // 320x240 — fits comfortably in one UDP packet
         config.jpeg_quality = 12;
-        config.fb_count = 1;
+        config.fb_count     = 2;
+    } else {
+        config.frame_size   = FRAMESIZE_QVGA;
+        config.jpeg_quality = 15;
+        config.fb_count     = 1;
     }
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
-        Serial.printf("Camera init failed with error 0x%x", err);
-        return;
+        Serial.printf("[CAM] Camera init failed: 0x%x\n", err);
+    } else {
+        Serial.println("[CAM] Camera initialised (QVGA/JPEG).");
     }
+}
 
-    // Connect WiFi
-    Serial.printf("Connecting to Hotspot: %s ...\n", ssid);
+// ---------------------------------------------------------------------------
+// Servo helpers
+// ---------------------------------------------------------------------------
+void applyServo(int pan, int tilt) {
+    currentPan  = constrain(pan,  0, 180);
+    currentTilt = constrain(tilt, 0, 180);
+    panServo.write(currentPan);
+    tiltServo.write(currentTilt);
+    Serial.printf("[SERVO] Pan=%d  Tilt=%d\n", currentPan, currentTilt);
+}
+
+void resetServos() {
+    applyServo(PAN_CENTER, TILT_CENTER);
+    Serial.println("[SERVO] Reset to centre.");
+}
+
+// ---------------------------------------------------------------------------
+// Command parser  ("PING", "FLASH_TOGGLE", "SERVO:<p>:<t>", "SERVO_RESET")
+// ---------------------------------------------------------------------------
+void handleCommand(const String& msg) {
+    if (msg == "PING") {
+        // Reply PONG to the sender
+        cmdUdp.beginPacket(cmdUdp.remoteIP(), cmdUdp.remotePort());
+        cmdUdp.print("PONG");
+        cmdUdp.endPacket();
+
+        // Remember the laptop's IP so we can push video to it
+        laptopIP    = cmdUdp.remoteIP();
+        laptopKnown = true;
+
+    } else if (msg == "FLASH_TOGGLE") {
+        flashOn = !flashOn;
+        digitalWrite(FLASH_LED_PIN, flashOn ? HIGH : LOW);
+        Serial.printf("[FLASH] %s\n", flashOn ? "ON" : "OFF");
+
+    } else if (msg.startsWith("SERVO:")) {
+        // Format: "SERVO:<pan>:<tilt>"
+        int firstColon  = msg.indexOf(':', 6);
+        if (firstColon == -1) return;
+        int pan  = msg.substring(6, firstColon).toInt();
+        int tilt = msg.substring(firstColon + 1).toInt();
+        applyServo(pan, tilt);
+
+    } else if (msg == "SERVO_RESET") {
+        resetServos();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// setup()
+// ---------------------------------------------------------------------------
+void setup() {
+    Serial.begin(115200);
+
+    // Flash LED
+    pinMode(FLASH_LED_PIN, OUTPUT);
+    digitalWrite(FLASH_LED_PIN, LOW);
+
+    // Servos
+    panServo.attach(PAN_SERVO_PIN);
+    tiltServo.attach(TILT_SERVO_PIN);
+    resetServos();
+
+    // Camera
+    initCamera();
+
+    // WiFi
+    Serial.printf("[NET] Connecting to %s ...\n", ssid);
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
     }
-    Serial.println("\nCONNECTED!");
+    Serial.printf("\n[NET] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
 
-    // Start HTTP Video Stream Webserver
-    startCameraServer();
-    Serial.print("Camera Stream Ready! Connect to: http://");
-    Serial.println(WiFi.localIP());
-
-    // Start UDP Socket for Heartbeat
-    udp.begin(localUdpPort);
-    Serial.printf("Listening for UDP Heartbeats on port: %d\n", localUdpPort);
+    // UDP sockets
+    cmdUdp.begin(CMD_PORT);
+    Serial.printf("[NET] Listening for commands on UDP port %d\n", CMD_PORT);
+    Serial.printf("[NET] Will push video UDP to laptop port %d once laptop is known\n", VIDEO_PORT);
 }
 
+// ---------------------------------------------------------------------------
+// loop()
+// ---------------------------------------------------------------------------
 void loop() {
-    // Basic UDP heartbeat loop
-    int packetSize = udp.parsePacket();
-    if (packetSize) {
-        int len = udp.read(incomingPacket, 255);
-        if (len > 0) {
-            incomingPacket[len] = '\0';
-        }
-        
+    // ---- 1. Handle incoming control commands ----
+    int packetSize = cmdUdp.parsePacket();
+    if (packetSize > 0) {
+        int len = cmdUdp.read(incomingPacket, sizeof(incomingPacket) - 1);
+        if (len > 0) incomingPacket[len] = '\0';
         String msg = String(incomingPacket);
         msg.trim();
-        
-        if (msg == "PING") {
-            udp.beginPacket(udp.remoteIP(), udp.remotePort());
-            udp.printf("PONG");
-            udp.endPacket();
-        } 
+        handleCommand(msg);
     }
-    
-    // Yield to let ESP32 handle background WiFi tasks
-    delay(10);
+
+    // ---- 2. Capture and push JPEG frame (only if laptop IP is known) ----
+    if (laptopKnown) {
+        camera_fb_t* fb = esp_camera_fb_get();
+        if (fb) {
+            if (fb->len <= 65000) {
+                // Single-packet send (QVGA JPEG is typically 5-20 kB)
+                vidUdp.beginPacket(laptopIP, VIDEO_PORT);
+                vidUdp.write(fb->buf, fb->len);
+                vidUdp.endPacket();
+            } else {
+                Serial.printf("[CAM] Frame too large for single UDP packet (%u bytes), skipping.\n", fb->len);
+            }
+            esp_camera_fb_return(fb);
+        }
+    }
+
+    // Small yield to prevent watchdog resets
+    delay(5);
 }
